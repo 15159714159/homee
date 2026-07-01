@@ -72,6 +72,16 @@ h3{font-size:14px;color:#444;margin:10px 0 6px}
 </div>
 
 <script>
+// HTML转义函数（防止大段代码被当成真实HTML解析导致卡死）
+function escapeHTML(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 let messages = JSON.parse(localStorage.getItem('rj_messages')||'[]');
 let longMemory = JSON.parse(localStorage.getItem('rj_memory')||'null');
 
@@ -134,13 +144,17 @@ function renderChat(){
     div.className = 'msg '+m.role;
     let html = '';
     if(m.thinking){
+      // 转义思维链内容，再替换换行
+      const safeThinking = escapeHTML(m.thinking).replace(/\n/g,'<br>');
       html += `<div class="thinking collapsed" onclick="this.classList.toggle('collapsed')">
         <div class="thinking-head">💭 思维链（点击展开）</div>
-        <div class="thinking-body">${m.thinking.replace(/\n/g,'<br>')}</div>
+        <div class="thinking-body">${safeThinking}</div>
       </div>`;
     }
     if(m.image) html += `<img src="${m.image}">`;
-    html += `<div class="text">${(m.content||'').replace(/\n/g,'<br>')}</div>`;
+    // 转义消息正文，再替换换行
+    const safeContent = escapeHTML(m.content||'').replace(/\n/g,'<br>');
+    html += `<div class="text">${safeContent}</div>`;
     html += `<div class="time">${m.time||''}</div>`;
     html += `<div class="btns">
       <button onclick="editMsg(${i})">✏️</button>
