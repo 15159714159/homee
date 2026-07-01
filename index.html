@@ -12,6 +12,7 @@ body{margin:0;font-family:sans-serif;background:#fff;color:#222;display:flex;hei
 .msg.user{background:#e0e0e0;margin-left:auto}
 .msg.ai{background:#f7f7f7}
 .msg img{max-width:200px;border-radius:8px;display:block;margin-top:6px}
+.text{white-space:pre-wrap;word-break:break-word}  /* 关键：保留换行且不溢出 */
 .time{font-size:10px;color:#999;margin-top:4px}
 .btns{display:none;position:absolute;top:-10px;right:6px;background:#fff;border:1px solid #ddd;border-radius:6px}
 .msg:hover .btns{display:flex}
@@ -72,16 +73,6 @@ h3{font-size:14px;color:#444;margin:10px 0 6px}
 </div>
 
 <script>
-// HTML转义函数（防止大段代码被当成真实HTML解析导致卡死）
-function escapeHTML(str) {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
 let messages = JSON.parse(localStorage.getItem('rj_messages')||'[]');
 let longMemory = JSON.parse(localStorage.getItem('rj_memory')||'null');
 
@@ -136,41 +127,72 @@ function timeStr(){
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
 }
 
+// 核心渲染函数：全部使用 textContent 避免大量 <br> 和 HTML 解析
 function renderChat(){
   const box = document.getElementById('chat');
-  box.innerHTML='';
-  messages.forEach((m,i)=>{
+  box.innerHTML = ''; // 清空
+
+  messages.forEach((m,i) => {
     const div = document.createElement('div');
-    div.className = 'msg '+m.role;
-    let html = '';
+    div.className = 'msg ' + m.role;
+
+    // 思维链（如果有）
     if(m.thinking){
-      // 转义思维链内容，再替换换行
-      const safeThinking = escapeHTML(m.thinking).replace(/\n/g,'<br>');
-      html += `<div class="thinking collapsed" onclick="this.classList.toggle('collapsed')">
-        <div class="thinking-head">💭 思维链（点击展开）</div>
-        <div class="thinking-body">${safeThinking}</div>
-      </div>`;
+      const thinkDiv = document.createElement('div');
+      thinkDiv.className = 'thinking collapsed';
+      thinkDiv.onclick = function(){ this.classList.toggle('collapsed'); };
+      // 头部文字
+      const head = document.createElement('div');
+      head.className = 'thinking-head';
+      head.textContent = '💭 思维链（点击展开）';
+      thinkDiv.appendChild(head);
+      // 思维链正文（纯文本）
+      const body = document.createElement('div');
+      body.className = 'thinking-body';
+      body.textContent = m.thinking;
+      thinkDiv.appendChild(body);
+      div.appendChild(thinkDiv);
     }
-    if(m.image) html += `<img src="${m.image}">`;
-    // 转义消息正文，再替换换行
-    const safeContent = escapeHTML(m.content||'').replace(/\n/g,'<br>');
-    html += `<div class="text">${safeContent}</div>`;
-    html += `<div class="time">${m.time||''}</div>`;
-    html += `<div class="btns">
+
+    // 图片
+    if(m.image){
+      const img = document.createElement('img');
+      img.src = m.image;
+      div.appendChild(img);
+    }
+
+    // 消息正文（纯文本，保留换行由 CSS white-space: pre-wrap 处理）
+    const textDiv = document.createElement('div');
+    textDiv.className = 'text';
+    textDiv.textContent = m.content || '';
+    div.appendChild(textDiv);
+
+    // 时间戳
+    const timeDiv = document.createElement('div');
+    timeDiv.className = 'time';
+    timeDiv.textContent = m.time || '';
+    div.appendChild(timeDiv);
+
+    // 操作按钮
+    const btns = document.createElement('div');
+    btns.className = 'btns';
+    btns.innerHTML = `
       <button onclick="editMsg(${i})">✏️</button>
       <button onclick="deleteMsg(${i})">🗑️</button>
-      ${m.role==='ai'?`<button onclick="reroll(${i})">🔁</button>`:''}
-    </div>`;
-    div.innerHTML = html;
+      ${m.role === 'ai' ? `<button onclick="reroll(${i})">🔁</button>` : ''}
+    `;
+    div.appendChild(btns);
+
     box.appendChild(div);
   });
+
   box.scrollTop = box.scrollHeight;
 }
 renderChat();
 
 function editMsg(i){
   const newText = prompt('编辑消息：', messages[i].content);
-  if(newText!==null){ messages[i].content = newText; save(); renderChat(); }
+  if(newText !== null){ messages[i].content = newText; save(); renderChat(); }
 }
 function deleteMsg(i){
   messages.splice(i,1); save(); renderChat();
