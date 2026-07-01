@@ -12,7 +12,7 @@ body{margin:0;font-family:sans-serif;background:#fff;color:#222;display:flex;hei
 .msg.user{background:#e0e0e0;margin-left:auto}
 .msg.ai{background:#f7f7f7}
 .msg img{max-width:200px;border-radius:8px;display:block;margin-top:6px}
-.text{white-space:pre-wrap;word-break:break-word}  /* 关键：保留换行且不溢出 */
+.text{white-space:pre-wrap;word-break:break-word}
 .time{font-size:10px;color:#999;margin-top:4px}
 .btns{display:none;position:absolute;top:-10px;right:6px;background:#fff;border:1px solid #ddd;border-radius:6px}
 .msg:hover .btns{display:flex}
@@ -75,6 +75,7 @@ h3{font-size:14px;color:#444;margin:10px 0 6px}
 <script>
 let messages = JSON.parse(localStorage.getItem('rj_messages')||'[]');
 let longMemory = JSON.parse(localStorage.getItem('rj_memory')||'null');
+let isStreaming = false;  // 防止重复发送
 
 document.getElementById('endpoint').value = localStorage.getItem('rj_endpoint')||'';
 document.getElementById('apikey').value = localStorage.getItem('rj_apikey')||'';
@@ -127,65 +128,61 @@ function timeStr(){
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
 }
 
-// 核心渲染函数：全部使用 textContent 避免大量 <br> 和 HTML 解析
+// 创建一个空的消息气泡（用于流式更新）
+function createMessageDiv(msgData, index) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + msgData.role;
+  
+  // 思维链容器
+  if (msgData.thinking !== undefined) {
+    const thinkDiv = document.createElement('div');
+    thinkDiv.className = 'thinking';  // 默认展开，让用户看到思考过程
+    thinkDiv.onclick = function(){ this.classList.toggle('collapsed'); };
+    const head = document.createElement('div');
+    head.className = 'thinking-head';
+    head.textContent = '💭 思维链（点击展开）';
+    thinkDiv.appendChild(head);
+    const body = document.createElement('div');
+    body.className = 'thinking-body';
+    body.textContent = msgData.thinking || '';
+    thinkDiv.appendChild(body);
+    div.appendChild(thinkDiv);
+  }
+
+  if (msgData.image) {
+    const img = document.createElement('img');
+    img.src = msgData.image;
+    div.appendChild(img);
+  }
+
+  const textDiv = document.createElement('div');
+  textDiv.className = 'text';
+  textDiv.textContent = msgData.content || '';
+  div.appendChild(textDiv);
+
+  const timeDiv = document.createElement('div');
+  timeDiv.className = 'time';
+  timeDiv.textContent = msgData.time || '';
+  div.appendChild(timeDiv);
+
+  const btns = document.createElement('div');
+  btns.className = 'btns';
+  btns.innerHTML = `
+    <button onclick="editMsg(${index})">✏️</button>
+    <button onclick="deleteMsg(${index})">🗑️</button>
+    ${msgData.role === 'ai' ? `<button onclick="reroll(${index})">🔁</button>` : ''}
+  `;
+  div.appendChild(btns);
+  return div;
+}
+
+// 全量渲染（使用 textContent，安全无卡顿）
 function renderChat(){
   const box = document.getElementById('chat');
-  box.innerHTML = ''; // 清空
-
+  box.innerHTML = '';
   messages.forEach((m,i) => {
-    const div = document.createElement('div');
-    div.className = 'msg ' + m.role;
-
-    // 思维链（如果有）
-    if(m.thinking){
-      const thinkDiv = document.createElement('div');
-      thinkDiv.className = 'thinking collapsed';
-      thinkDiv.onclick = function(){ this.classList.toggle('collapsed'); };
-      // 头部文字
-      const head = document.createElement('div');
-      head.className = 'thinking-head';
-      head.textContent = '💭 思维链（点击展开）';
-      thinkDiv.appendChild(head);
-      // 思维链正文（纯文本）
-      const body = document.createElement('div');
-      body.className = 'thinking-body';
-      body.textContent = m.thinking;
-      thinkDiv.appendChild(body);
-      div.appendChild(thinkDiv);
-    }
-
-    // 图片
-    if(m.image){
-      const img = document.createElement('img');
-      img.src = m.image;
-      div.appendChild(img);
-    }
-
-    // 消息正文（纯文本，保留换行由 CSS white-space: pre-wrap 处理）
-    const textDiv = document.createElement('div');
-    textDiv.className = 'text';
-    textDiv.textContent = m.content || '';
-    div.appendChild(textDiv);
-
-    // 时间戳
-    const timeDiv = document.createElement('div');
-    timeDiv.className = 'time';
-    timeDiv.textContent = m.time || '';
-    div.appendChild(timeDiv);
-
-    // 操作按钮
-    const btns = document.createElement('div');
-    btns.className = 'btns';
-    btns.innerHTML = `
-      <button onclick="editMsg(${i})">✏️</button>
-      <button onclick="deleteMsg(${i})">🗑️</button>
-      ${m.role === 'ai' ? `<button onclick="reroll(${i})">🔁</button>` : ''}
-    `;
-    div.appendChild(btns);
-
-    box.appendChild(div);
+    box.appendChild(createMessageDiv(m, i));
   });
-
   box.scrollTop = box.scrollHeight;
 }
 renderChat();
@@ -198,8 +195,10 @@ function deleteMsg(i){
   messages.splice(i,1); save(); renderChat();
 }
 function reroll(i){
+  // 删除该条 AI 消息，然后重新生成
   messages.splice(i,1);
-  save(); renderChat();
+  save();
+  renderChat();
   callAPI();
 }
 
@@ -251,16 +250,23 @@ document.getElementById('input').addEventListener('keydown', e=>{
 });
 
 function sendMsg(){
+  if (isStreaming) return;  // 正在接收回复时不允许发送
   const input = document.getElementById('input');
   const text = input.value.trim();
   if(!text) return;
   messages.push({role:'user', content:text, time:timeStr()});
-  input.value='';
-  save(); renderChat();
+  input.value = '';
+  save();
+  renderChat();  // 先渲染用户消息
   callAPI();
 }
 
 async function callAPI(){
+  isStreaming = true;
+  const sendBtn = document.getElementById('sendBtn');
+  sendBtn.disabled = true;
+  sendBtn.textContent = '思考中…';
+
   let base = document.getElementById('endpoint').value.trim().replace(/\/+$/,'');
   const endpoint = base + '/chat/completions';
   const key = document.getElementById('apikey').value;
@@ -283,21 +289,103 @@ async function callAPI(){
     }
   });
 
-  try{
-    const res = await fetch(endpoint, {
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
-      body: JSON.stringify({model, messages: apiMessages})
+  // 创建一个临时消息对象用于流式累积
+  const tempMsg = { role: 'ai', content: '', thinking: '', time: timeStr() };
+  // 先在聊天框里插入一个空的气泡
+  const chatBox = document.getElementById('chat');
+  const msgDiv = createMessageDiv(tempMsg, messages.length); // 索引暂用当前长度（后面会push）
+  chatBox.appendChild(msgDiv);
+  const textDiv = msgDiv.querySelector('.text');
+  const thinkBody = msgDiv.querySelector('.thinking-body');
+
+  // 滚动到底部
+  chatBox.scrollTop = chatBox.scrollHeight;
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + key,
+        'Accept': 'text/event-stream'
+      },
+      body: JSON.stringify({
+        model,
+        messages: apiMessages,
+        stream: true
+      })
     });
-    const data = await res.json();
-    const msgObj = data.choices?.[0]?.message || {};
-    const reply = msgObj.content || '（然竣沉默了……检查一下API配置？）';
-    const thinking = msgObj.reasoning_content || msgObj.thinking || '';
-    messages.push({role:'ai', content:reply, thinking:thinking, time:timeStr()});
-    save(); renderChat();
-  }catch(e){
-    messages.push({role:'ai', content:'……连接出问题了，笨猪检查下端点。', time:timeStr()});
-    save(); renderChat();
+
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      // 保留可能不完整的最后一行
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+        
+        const dataStr = trimmed.slice(6).trim();
+        if (dataStr === '[DONE]') continue;
+
+        try {
+          const chunk = JSON.parse(dataStr);
+          const delta = chunk.choices?.[0]?.delta;
+          if (!delta) continue;
+
+          // 处理文本内容
+          if (delta.content) {
+            tempMsg.content += delta.content;
+            textDiv.textContent = tempMsg.content;
+          }
+
+          // 处理思考链（部分模型会返回 reasoning_content 或 thinking）
+          const reasoning = delta.reasoning_content || delta.thinking || '';
+          if (reasoning) {
+            tempMsg.thinking += reasoning;
+            if (thinkBody) {
+              thinkBody.textContent = tempMsg.thinking;
+              // 确保思考区可见（如果是折叠状态则暂时展开，由用户自己控制）
+              const thinkDiv = msgDiv.querySelector('.thinking');
+              if (thinkDiv && thinkDiv.classList.contains('collapsed')) {
+                thinkDiv.classList.remove('collapsed');
+              }
+            }
+          }
+        } catch (e) {
+          // 忽略解析错误，可能是不完整的 JSON
+        }
+      }
+      
+      // 流式滚动
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+  } catch (e) {
+    // 请求失败，显示错误提示
+    tempMsg.content = '……连接出问题了，笨猪检查下端点。';
+    textDiv.textContent = tempMsg.content;
+  } finally {
+    // 流式结束，保存完整消息
+    messages.push(tempMsg);
+    save();
+
+    // 恢复按钮状态
+    sendBtn.disabled = false;
+    sendBtn.textContent = '发送';
+    isStreaming = false;
+
+    // 注意：不需要重新 renderChat()，因为我们已经动态构建了消息，
+    // 后续如果触发 renderChat 会基于 messages 重建，数据是同步的。
   }
 }
 
