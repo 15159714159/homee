@@ -174,22 +174,28 @@ function buildMessageDOM(m, i){
   return div;
 }
 
-function renderChat(){
+// ⬇️ 改动：增加 scrollToBottom 参数，默认 true
+function renderChat(scrollToBottom = true){
   const box = document.getElementById('chat');
   box.innerHTML = '';
   messages.forEach((m,i) => {
     box.appendChild(buildMessageDOM(m, i));
   });
-  box.scrollTop = box.scrollHeight;
+  // 只有需要滚动时才滚到底部
+  if (scrollToBottom) {
+    box.scrollTop = box.scrollHeight;
+  }
 }
 renderChat();
 
+// ⬇️ 改动：编辑消息时传 false，不滚动
 function editMsg(i){
   const newText = prompt('编辑消息：', messages[i].content);
-  if(newText !== null){ messages[i].content = newText; save(); renderChat(); }
+  if(newText !== null){ messages[i].content = newText; save(); renderChat(false); }
 }
+// ⬇️ 改动：删除消息时传 false，不滚动
 function deleteMsg(i){
-  messages.splice(i,1); save(); renderChat();
+  messages.splice(i,1); save(); renderChat(false);
 }
 function reroll(i){
   messages.splice(i,1);
@@ -246,7 +252,6 @@ document.getElementById('fileInput').onchange = (e)=>{
     // ---------- 修复文本读取 ----------
     reader.onload = ()=>{
       let text = reader.result || '';
-      // 如果文件有内容但读取结果为空，很可能是编码问题
       if (text === '' && file.size > 0) {
         text = '[警告：文件内容为空或编码不兼容，请另存为 UTF-8 后重试]';
       } else if (file.size === 0) {
@@ -276,11 +281,8 @@ document.getElementById('fileInput').onchange = (e)=>{
       messages.push(msg);
       save();
       renderChat();
-      // 不自动发送AI，因为内容无效
     };
-    // 指定 UTF-8 编码
     reader.readAsText(file, 'UTF-8');
-    // ---------- 修复结束 ----------
   } else {
     // 其他文件
     const sizeKB = (file.size / 1024).toFixed(1);
