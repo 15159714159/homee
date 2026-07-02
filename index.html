@@ -198,7 +198,7 @@ function reroll(i){
   callAPI();
 }
 
-// ---------- 文件上传改造（修复版） ----------
+// ---------- 文件上传（修复文本读取） ----------
 document.getElementById('uploadBtn').onclick = ()=>{
   if(isStreaming){
     alert('⏳ 然竣正在回复，请稍后上传文件');
@@ -210,18 +210,17 @@ document.getElementById('uploadBtn').onclick = ()=>{
 document.getElementById('fileInput').onchange = (e)=>{
   const file = e.target.files[0];
   if(!file) return;
-  e.target.value = ''; // 重置以便重复选择
+  e.target.value = '';
 
-  // 检查文件大小（图片超过5MB警告，其他文件超过20MB警告）
-  const maxImageSize = 5 * 1024 * 1024;  // 5MB
-  const maxOtherSize = 20 * 1024 * 1024; // 20MB
+  // 文件大小限制
+  const maxImageSize = 5 * 1024 * 1024;
+  const maxOtherSize = 20 * 1024 * 1024;
   if(file.type.startsWith('image/') && file.size > maxImageSize){
     alert('图片过大（超过5MB），请压缩后上传');
     return;
   }
   if(!file.type.startsWith('image/') && !file.type.startsWith('text/') && file.size > maxOtherSize){
     alert('文件过大（超过20MB），可能无法处理，请选择较小的文件');
-    // 仍然允许，但警告
   }
 
   const isImage = file.type.startsWith('image/');
@@ -240,13 +239,20 @@ document.getElementById('fileInput').onchange = (e)=>{
       messages.push(msg);
       save();
       renderChat();
-      callAPI();  // 自动发送
+      callAPI();
     };
     reader.readAsDataURL(file);
   } else if (isText) {
+    // ---------- 修复文本读取 ----------
     reader.onload = ()=>{
-      let text = reader.result;
-      const maxLen = 8000; // 更保守的截断
+      let text = reader.result || '';
+      // 如果文件有内容但读取结果为空，很可能是编码问题
+      if (text === '' && file.size > 0) {
+        text = '[警告：文件内容为空或编码不兼容，请另存为 UTF-8 后重试]';
+      } else if (file.size === 0) {
+        text = '[文件为空]';
+      }
+      const maxLen = 8000;
       if (text.length > maxLen) {
         text = text.slice(0, maxLen) + '\n…（内容过长已截断，剩余部分未发送）';
       }
@@ -261,9 +267,22 @@ document.getElementById('fileInput').onchange = (e)=>{
       renderChat();
       callAPI();
     };
-    reader.readAsText(file);
+    reader.onerror = ()=>{
+      const msg = {
+        role: 'user',
+        content: `[文件] ${file.name} —— 读取失败，错误：${reader.error?.message || '未知错误'}`,
+        time: timeStr()
+      };
+      messages.push(msg);
+      save();
+      renderChat();
+      // 不自动发送AI，因为内容无效
+    };
+    // 指定 UTF-8 编码
+    reader.readAsText(file, 'UTF-8');
+    // ---------- 修复结束 ----------
   } else {
-    // 其他文件：只显示基本信息
+    // 其他文件
     const sizeKB = (file.size / 1024).toFixed(1);
     const msg = {
       role: 'user',
@@ -276,7 +295,7 @@ document.getElementById('fileInput').onchange = (e)=>{
     callAPI();
   }
 };
-// ---------- 文件上传改造结束 ----------
+// ---------- 文件上传结束 ----------
 
 document.getElementById('loadModels').onclick = async ()=>{
   let base = document.getElementById('endpoint').value.trim().replace(/\/+$/,'');
@@ -361,7 +380,6 @@ async function callAPI(){
   streamDiv.className = 'msg ai';
   let textDiv, thinkDiv, thinkBody;
 
-  // 思维链容器
   const container = document.createElement('div');
   container.className = 'thinking collapsed';
   container.onclick = function(){ this.classList.toggle('collapsed'); };
