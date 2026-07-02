@@ -65,7 +65,6 @@ h3{font-size:14px;color:#444;margin:10px 0 6px}
 <div id="main">
   <div id="chat"></div>
   <div id="input-area">
-    <!-- 去掉 accept 限制，允许任意文件 -->
     <input type="file" id="fileInput" style="display:none">
     <button id="uploadBtn">📷</button>
     <textarea id="input" rows="1" placeholder="跟然竣说点什么…"></textarea>
@@ -199,23 +198,38 @@ function reroll(i){
   callAPI();
 }
 
-// ---------- 文件上传改造 ----------
-document.getElementById('uploadBtn').onclick = ()=>document.getElementById('fileInput').click();
+// ---------- 文件上传改造（修复版） ----------
+document.getElementById('uploadBtn').onclick = ()=>{
+  if(isStreaming){
+    alert('⏳ 然竣正在回复，请稍后上传文件');
+    return;
+  }
+  document.getElementById('fileInput').click();
+};
 
 document.getElementById('fileInput').onchange = (e)=>{
   const file = e.target.files[0];
   if(!file) return;
-  // 重置，以便再次选择同一文件
-  e.target.value = '';
+  e.target.value = ''; // 重置以便重复选择
 
-  // 判断文件类型
+  // 检查文件大小（图片超过5MB警告，其他文件超过20MB警告）
+  const maxImageSize = 5 * 1024 * 1024;  // 5MB
+  const maxOtherSize = 20 * 1024 * 1024; // 20MB
+  if(file.type.startsWith('image/') && file.size > maxImageSize){
+    alert('图片过大（超过5MB），请压缩后上传');
+    return;
+  }
+  if(!file.type.startsWith('image/') && !file.type.startsWith('text/') && file.size > maxOtherSize){
+    alert('文件过大（超过20MB），可能无法处理，请选择较小的文件');
+    // 仍然允许，但警告
+  }
+
   const isImage = file.type.startsWith('image/');
-  const isText = file.type.startsWith('text/') || /\.(txt|json|csv|md|log|xml|html|css|js|ts|py|java|c|cpp|h|sh|bat|pl|rb|go|rs|swift|kt|dart|php|lua|r|sql|vb|vbs|ps1|ini|cfg|conf|yaml|yml|toml|properties|env|gitignore|dockerignore|editorconfig|eslintrc|prettierrc|babelrc|stylelintrc|mjs|cjs|mts|cts|wasm|wast|wat)$/i.test(file.name)); // 扩展名粗略判断
+  const isText = file.type.startsWith('text/') || /\.(txt|json|csv|md|log|xml|html|css|js|ts|py|java|c|cpp|h|sh|bat|pl|rb|go|rs|swift|kt|dart|php|lua|r|sql|vb|vbs|ps1|ini|cfg|conf|yaml|yml|toml|properties|env|gitignore|dockerignore|editorconfig|eslintrc|prettierrc|babelrc|stylelintrc|mjs|cjs|mts|cts|wasm|wast|wat)$/i.test(file.name);
 
   const reader = new FileReader();
 
   if (isImage) {
-    // 图片：读为 DataURL
     reader.onload = ()=>{
       const msg = {
         role: 'user',
@@ -230,15 +244,16 @@ document.getElementById('fileInput').onchange = (e)=>{
     };
     reader.readAsDataURL(file);
   } else if (isText) {
-    // 文本文件：读取为文本
     reader.onload = ()=>{
-      const text = reader.result;
-      // 限制文本长度（防止过大），可调整
-      const maxLen = 50000;
-      const content = text.length > maxLen ? text.slice(0, maxLen) + '\n…（内容过长已截断）' : text;
+      let text = reader.result;
+      const maxLen = 8000; // 更保守的截断
+      if (text.length > maxLen) {
+        text = text.slice(0, maxLen) + '\n…（内容过长已截断，剩余部分未发送）';
+      }
+      const content = `[文件] ${file.name}\n\`\`\`\n${text}\n\`\`\``;
       const msg = {
         role: 'user',
-        content: `[文件] ${file.name}\n\`\`\`\n${content}\n\`\`\``,
+        content: content,
         time: timeStr()
       };
       messages.push(msg);
@@ -248,11 +263,11 @@ document.getElementById('fileInput').onchange = (e)=>{
     };
     reader.readAsText(file);
   } else {
-    // 其他文件：只显示文件名和大小
+    // 其他文件：只显示基本信息
     const sizeKB = (file.size / 1024).toFixed(1);
     const msg = {
       role: 'user',
-      content: `[文件] 文件名: ${file.name}, 大小: ${sizeKB} KB (不支持预览)`,
+      content: `[文件] 文件名: ${file.name}, 大小: ${sizeKB} KB (不支持预览，AI无法读取内容)`,
       time: timeStr()
     };
     messages.push(msg);
@@ -313,7 +328,9 @@ function sendMsg(){
 async function callAPI(){
   isStreaming = true;
   const sendBtn = document.getElementById('sendBtn');
+  const uploadBtn = document.getElementById('uploadBtn');
   sendBtn.disabled = true;
+  uploadBtn.disabled = true;
   sendBtn.textContent = '生成中…';
 
   const base = document.getElementById('endpoint').value.trim().replace(/\/+$/,'');
@@ -438,6 +455,7 @@ async function callAPI(){
   renderChat();
 
   sendBtn.disabled = false;
+  uploadBtn.disabled = false;
   sendBtn.textContent = '发送';
   isStreaming = false;
 }
