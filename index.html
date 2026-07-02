@@ -65,7 +65,8 @@ h3{font-size:14px;color:#444;margin:10px 0 6px}
 <div id="main">
   <div id="chat"></div>
   <div id="input-area">
-    <input type="file" id="fileInput" accept="image/*" style="display:none">
+    <!-- 去掉 accept 限制，允许任意文件 -->
+    <input type="file" id="fileInput" style="display:none">
     <button id="uploadBtn">📷</button>
     <textarea id="input" rows="1" placeholder="跟然竣说点什么…"></textarea>
     <button id="sendBtn">发送</button>
@@ -128,7 +129,6 @@ function timeStr(){
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
 }
 
-// 构建一条消息的完整DOM（用于 renderChat）
 function buildMessageDOM(m, i){
   const div = document.createElement('div');
   div.className = 'msg ' + m.role;
@@ -199,17 +199,69 @@ function reroll(i){
   callAPI();
 }
 
+// ---------- 文件上传改造 ----------
 document.getElementById('uploadBtn').onclick = ()=>document.getElementById('fileInput').click();
+
 document.getElementById('fileInput').onchange = (e)=>{
   const file = e.target.files[0];
   if(!file) return;
+  // 重置，以便再次选择同一文件
+  e.target.value = '';
+
+  // 判断文件类型
+  const isImage = file.type.startsWith('image/');
+  const isText = file.type.startsWith('text/') || /\.(txt|json|csv|md|log|xml|html|css|js|ts|py|java|c|cpp|h|sh|bat|pl|rb|go|rs|swift|kt|dart|php|lua|r|sql|vb|vbs|ps1|ini|cfg|conf|yaml|yml|toml|properties|env|gitignore|dockerignore|editorconfig|eslintrc|prettierrc|babelrc|stylelintrc|mjs|cjs|mts|cts|wasm|wast|wat)$/i.test(file.name)); // 扩展名粗略判断
+
   const reader = new FileReader();
-  reader.onload = ()=>{
-    messages.push({role:'user', content:'[发了张照片]', image:reader.result, time:timeStr()});
-    save(); renderChat();
-  };
-  reader.readAsDataURL(file);
+
+  if (isImage) {
+    // 图片：读为 DataURL
+    reader.onload = ()=>{
+      const msg = {
+        role: 'user',
+        content: '[图片]',
+        image: reader.result,
+        time: timeStr()
+      };
+      messages.push(msg);
+      save();
+      renderChat();
+      callAPI();  // 自动发送
+    };
+    reader.readAsDataURL(file);
+  } else if (isText) {
+    // 文本文件：读取为文本
+    reader.onload = ()=>{
+      const text = reader.result;
+      // 限制文本长度（防止过大），可调整
+      const maxLen = 50000;
+      const content = text.length > maxLen ? text.slice(0, maxLen) + '\n…（内容过长已截断）' : text;
+      const msg = {
+        role: 'user',
+        content: `[文件] ${file.name}\n\`\`\`\n${content}\n\`\`\``,
+        time: timeStr()
+      };
+      messages.push(msg);
+      save();
+      renderChat();
+      callAPI();
+    };
+    reader.readAsText(file);
+  } else {
+    // 其他文件：只显示文件名和大小
+    const sizeKB = (file.size / 1024).toFixed(1);
+    const msg = {
+      role: 'user',
+      content: `[文件] 文件名: ${file.name}, 大小: ${sizeKB} KB (不支持预览)`,
+      time: timeStr()
+    };
+    messages.push(msg);
+    save();
+    renderChat();
+    callAPI();
+  }
 };
+// ---------- 文件上传改造结束 ----------
 
 document.getElementById('loadModels').onclick = async ()=>{
   let base = document.getElementById('endpoint').value.trim().replace(/\/+$/,'');
@@ -254,7 +306,7 @@ function sendMsg(){
   messages.push({role:'user', content:text, time:timeStr()});
   input.value = '';
   save();
-  renderChat();  // 先显示用户消息
+  renderChat();
   callAPI();
 }
 
@@ -286,31 +338,26 @@ async function callAPI(){
     }
   });
 
-  // 临时对象，用于累积流式内容
   const tempMsg = { role: 'ai', content: '', thinking: '', time: timeStr() };
 
-  // 创建流式气泡（无按钮，纯文本+思维链）
   const streamDiv = document.createElement('div');
   streamDiv.className = 'msg ai';
   let textDiv, thinkDiv, thinkBody;
 
-  // 思维链区
-  if (true) { // 始终预留思维链区，后面有内容才填充
-    const container = document.createElement('div');
-    container.className = 'thinking collapsed';
-    container.onclick = function(){ this.classList.toggle('collapsed'); };
-    const head = document.createElement('div');
-    head.className = 'thinking-head';
-    head.textContent = '💭 思维链（点击展开）';
-    container.appendChild(head);
-    thinkBody = document.createElement('div');
-    thinkBody.className = 'thinking-body';
-    container.appendChild(thinkBody);
-    thinkDiv = container;
-    streamDiv.appendChild(container);
-  }
+  // 思维链容器
+  const container = document.createElement('div');
+  container.className = 'thinking collapsed';
+  container.onclick = function(){ this.classList.toggle('collapsed'); };
+  const head = document.createElement('div');
+  head.className = 'thinking-head';
+  head.textContent = '💭 思维链（点击展开）';
+  container.appendChild(head);
+  thinkBody = document.createElement('div');
+  thinkBody.className = 'thinking-body';
+  container.appendChild(thinkBody);
+  thinkDiv = container;
+  streamDiv.appendChild(container);
 
-  // 正文区
   textDiv = document.createElement('div');
   textDiv.className = 'text';
   streamDiv.appendChild(textDiv);
@@ -351,7 +398,6 @@ async function callAPI(){
         let dataStr = line.trim();
         if (!dataStr) continue;
 
-        // 兼容标准 SSE "data: {...}" 和非标准直接 "{...}"
         if (dataStr.startsWith('data: ')) {
           dataStr = dataStr.slice(6).trim();
         }
@@ -372,16 +418,13 @@ async function callAPI(){
             tempMsg.thinking += reasoning;
             if (thinkBody) {
               thinkBody.textContent = tempMsg.thinking;
-              // 有思维链时自动展开
               thinkDiv.classList.remove('collapsed');
             }
           }
         } catch (e) {
-          // 忽略单行解析错误（可能是不完整的 JSON）
+          // ignore
         }
       }
-
-      // 实时滚动
       chatBox.scrollTop = chatBox.scrollHeight;
     }
   } catch (e) {
@@ -389,7 +432,6 @@ async function callAPI(){
     textDiv.textContent = tempMsg.content;
   }
 
-  // 流式结束：移除临时气泡，保存消息，重新渲染完整聊天框（按钮和索引都会正确）
   streamDiv.remove();
   messages.push(tempMsg);
   save();
