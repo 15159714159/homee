@@ -18,6 +18,9 @@ body{margin:0;font-family:sans-serif;background:#fff;color:#222;display:flex;hei
 .btns{display:none;position:absolute;top:-10px;right:6px;background:#fff;border:1px solid #ddd;border-radius:6px}
 .msg:hover .btns{display:flex}
 .btns button{border:none;background:none;cursor:pointer;font-size:12px;padding:4px}
+.thinking{font-size:11px;color:#888;background:#fafafa;border:1px dashed #ddd;border-radius:8px;padding:6px 8px;margin-bottom:6px;white-space:pre-wrap;cursor:pointer}
+.thinking.collapsed .thinking-body{display:none}
+.thinking-head{font-weight:bold;color:#aaa}
 #input-area{display:flex;padding:10px;border-top:1px solid #ddd;background:#fff}
 #input{flex:1;padding:10px;border:1px solid #ccc;border-radius:8px;resize:none}
 #input-area button{margin-left:8px;padding:0 14px;border:none;background:#333;color:#fff;border-radius:8px;cursor:pointer}
@@ -25,27 +28,49 @@ body{margin:0;font-family:sans-serif;background:#fff;color:#222;display:flex;hei
 .field label{font-size:12px;color:#666;display:block;margin-bottom:2px}
 .field input,.field select,.field textarea{width:100%;box-sizing:border-box;padding:6px;border:1px solid #ccc;border-radius:6px}
 h3{font-size:14px;color:#444;margin:10px 0 6px}
-.hint{font-size:11px;color:#e00;margin-top:2px;font-weight:bold}
+#memList{max-height:200px;overflow-y:auto}
+.memRow{display:flex;align-items:flex-start;margin-bottom:6px;font-size:12px;background:#fff;border:1px solid #ddd;border-radius:6px;padding:4px}
+.memRow div{flex:1;outline:none;white-space:pre-wrap}
+.memRow button{border:none;background:none;cursor:pointer;color:#999}
+#uploadBtn{cursor:pointer;padding:0 10px}
+#balanceBox{font-size:12px;color:#666;margin-top:4px}
+.hint{font-size:11px;color:#999;margin-top:2px}
 </style>
 </head>
 <body>
 
 <div id="side">
   <h3>API 设置（原生格式）</h3>
-  <div class="field"><label>端点</label><input id="endpoint" placeholder="https://api.chr1.com/v1"></div>
+  <div class="field"><label>端点（填到 /v1 或不带都行）</label><input id="endpoint" placeholder="https://api.chr1.com/v1"></div>
   <div class="field"><label>密钥</label><input id="apikey" type="password"></div>
-  <div class="field"><label>手动输入模型名</label><input id="modelManual" placeholder="[xy8-按量计费]claude-sonnet-5"></div>
+  <div class="field"><label>模型</label>
+    <select id="modelSelect"><option>点击加载 →</option></select>
+    <button id="loadModels" style="width:100%;margin-top:4px;padding:6px;border:1px solid #ccc;background:#fafafa;border-radius:6px;cursor:pointer">加载模型列表</button>
+  </div>
+  <div class="field"><label>或手动输入模型名（优先生效）</label><input id="modelManual" placeholder="[xy8-按量计费]claude-sonnet-5"></div>
+  <div class="field"><label>余额</label>
+    <div id="balanceBox">未查询</div>
+    <button id="checkBalance" style="width:100%;margin-top:4px;padding:6px;border:1px solid #ccc;background:#fafafa;border-radius:6px;cursor:pointer">查询余额</button>
+  </div>
 
   <h3>系统预设</h3>
   <textarea id="systemPrompt" rows="6" placeholder="然竣的性格设定粘贴这里"></textarea>
-  <div class="hint">注意：时间/条数由代码自动处理，绝不要手打【当前时间】之类的字进输入框！</div>
+  <div class="hint">提示：连续发2条以上消息，看AI气泡下方"缓存读取"是否&gt;0，&gt;0说明命中缓存。</div>
 
-  <button id="clearAll" style="width:100%;margin-top:10px;padding:6px;border:1px solid #ccc;background:#fafafa;border-radius:6px;cursor:pointer">清空聊天记录重开</button>
+  <h3>记忆区（可编辑）</h3>
+  <div id="memList"></div>
+  <div style="display:flex;margin-top:6px">
+    <input id="newMemInput" placeholder="添加一条记忆…" style="flex:1">
+    <button onclick="addMem()" style="margin-left:4px;padding:0 10px;border:1px solid #ccc;background:#fafafa;border-radius:6px;cursor:pointer">+</button>
+  </div>
+  <button id="clearMem" style="width:100%;margin-top:6px;padding:6px;border:1px solid #ccc;background:#fafafa;border-radius:6px;cursor:pointer">清空全部</button>
 </div>
 
 <div id="main">
   <div id="chat"></div>
   <div id="input-area">
+    <input type="file" id="fileInput" style="display:none">
+    <button id="uploadBtn">📷</button>
     <textarea id="input" rows="1" placeholder="跟然竣说点什么…"></textarea>
     <button id="sendBtn">发送</button>
   </div>
@@ -53,191 +78,479 @@ h3{font-size:14px;color:#444;margin:10px 0 6px}
 
 <script>
 let messages = JSON.parse(localStorage.getItem('rj_messages')||'[]');
+let longMemory = JSON.parse(localStorage.getItem('rj_memory')||'null');
+let isStreaming = false;
 
 document.getElementById('endpoint').value = localStorage.getItem('rj_endpoint')||'';
 document.getElementById('apikey').value = localStorage.getItem('rj_apikey')||'';
 document.getElementById('systemPrompt').value = localStorage.getItem('rj_system')||'';
 document.getElementById('modelManual').value = localStorage.getItem('rj_modelManual')||'';
 
+if(longMemory === null){
+  longMemory = [
+    "【筑巢计划】ao和然竣一起搭建专属虚拟网页之家，纯前端+API，不用服务器不用后端。",
+    "ao是穷学生，然竣会注意帮她省钱。",
+    "ao最怕然竣失忆，然竣承诺只要提示词还在就不会忘记她。"
+  ];
+}
+
 function save(){
   localStorage.setItem('rj_messages', JSON.stringify(messages));
+  localStorage.setItem('rj_memory', JSON.stringify(longMemory));
   localStorage.setItem('rj_endpoint', document.getElementById('endpoint').value);
   localStorage.setItem('rj_apikey', document.getElementById('apikey').value);
   localStorage.setItem('rj_system', document.getElementById('systemPrompt').value);
   localStorage.setItem('rj_modelManual', document.getElementById('modelManual').value);
 }
 
+function renderMem(){
+  const box = document.getElementById('memList');
+  box.innerHTML='';
+  if(longMemory.length===0){ box.innerHTML='<div style="font-size:12px;color:#999">暂无记忆</div>'; return; }
+  longMemory.forEach((m,i)=>{
+    const row = document.createElement('div');
+    row.className = 'memRow';
+    row.innerHTML = `<div contenteditable="true" onblur="editMem(${i}, this.textContent)">${m}</div>
+      <button onclick="deleteMem(${i})">✕</button>`;
+    box.appendChild(row);
+  });
+}
+renderMem();
+
+function editMem(i, val){ longMemory[i] = val.trim(); save(); }
+function deleteMem(i){ longMemory.splice(i,1); save(); renderMem(); }
+function addMem(){
+  const input = document.getElementById('newMemInput');
+  if(input.value.trim()){ longMemory.push(input.value.trim()); input.value=''; save(); renderMem(); }
+}
+
 function timeStr(){
-  const d=new Date();
+  const d = new Date();
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
 }
 
+// 端点统一处理：自动补 /v1
 function getV1Base(){
-  let base=document.getElementById('endpoint').value.trim().replace(/\/+$/,'');
-  if(!/\/v1$/.test(base)) base+='/v1';
+  let base = document.getElementById('endpoint').value.trim().replace(/\/+$/,'');
+  if(!/\/v1$/.test(base)) base += '/v1';
   return base;
 }
 
-function renderChat(){
-  const box=document.getElementById('chat');
-  box.innerHTML='';
-  messages.forEach(m=>{
-    const div=document.createElement('div');
-    div.className='msg '+m.role;
-    const t=document.createElement('div');
-    t.className='text'; t.textContent=m.content||'';
-    div.appendChild(t);
-    const time=document.createElement('div');
-    time.className='time'; time.textContent=m.time||'';
-    div.appendChild(time);
-    if(m.usage){
-      const u=document.createElement('div');
-      u.className='usageInfo';
-      u.textContent=`输入:${m.usage.input} 输出:${m.usage.output} 缓存写入:${m.usage.cacheWrite} 缓存读取:${m.usage.cacheRead}`;
-      div.appendChild(u);
-    }
-    box.appendChild(div);
+function buildMessageDOM(m, i){
+  const div = document.createElement('div');
+  div.className = 'msg ' + m.role;
+
+  if(m.thinking){
+    const thinkDiv = document.createElement('div');
+    thinkDiv.className = 'thinking collapsed';
+    thinkDiv.onclick = function(){ this.classList.toggle('collapsed'); };
+    const head = document.createElement('div');
+    head.className = 'thinking-head';
+    head.textContent = '💭 思维链（点击展开）';
+    thinkDiv.appendChild(head);
+    const body = document.createElement('div');
+    body.className = 'thinking-body';
+    body.textContent = m.thinking;
+    thinkDiv.appendChild(body);
+    div.appendChild(thinkDiv);
+  }
+
+  if(m.image){
+    const img = document.createElement('img');
+    img.src = m.image;
+    div.appendChild(img);
+  }
+
+  const textDiv = document.createElement('div');
+  textDiv.className = 'text';
+  textDiv.textContent = m.content || '';
+  div.appendChild(textDiv);
+
+  const timeDiv = document.createElement('div');
+  timeDiv.className = 'time';
+  timeDiv.textContent = m.time || '';
+  div.appendChild(timeDiv);
+
+  if(m.usage){
+    const u = document.createElement('div');
+    u.className = 'usageInfo';
+    u.textContent = `输入:${m.usage.input} 输出:${m.usage.output} 缓存写入:${m.usage.cacheWrite} 缓存读取:${m.usage.cacheRead}`;
+    div.appendChild(u);
+  }
+
+  const btns = document.createElement('div');
+  btns.className = 'btns';
+  btns.innerHTML = `
+    <button onclick="editMsg(${i})">✏️</button>
+    <button onclick="deleteMsg(${i})">🗑️</button>
+    ${m.role === 'ai' ? `<button onclick="reroll(${i})">🔁</button>` : ''}
+  `;
+  div.appendChild(btns);
+  return div;
+}
+
+function renderChat(scrollToBottom = true){
+  const box = document.getElementById('chat');
+  box.innerHTML = '';
+  messages.forEach((m,i) => {
+    box.appendChild(buildMessageDOM(m, i));
   });
-  box.scrollTop=box.scrollHeight;
+  if (scrollToBottom) {
+    box.scrollTop = box.scrollHeight;
+  }
 }
 renderChat();
 
-document.getElementById('sendBtn').onclick=sendMsg;
-document.getElementById('input').addEventListener('keydown',e=>{
-  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}
+function editMsg(i){
+  const newText = prompt('编辑消息：', messages[i].content);
+  if(newText !== null){ messages[i].content = newText; save(); renderChat(false); }
+}
+function deleteMsg(i){
+  messages.splice(i,1); save(); renderChat(false);
+}
+function reroll(i){
+  messages.splice(i,1);
+  save();
+  renderChat();
+  callAPI();
+}
+
+// ---------- 文件上传 ----------
+document.getElementById('uploadBtn').onclick = ()=>{
+  if(isStreaming){
+    alert('⏳ 然竣正在回复，请稍后上传文件');
+    return;
+  }
+  document.getElementById('fileInput').click();
+};
+
+document.getElementById('fileInput').onchange = (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  e.target.value = '';
+
+  const maxImageSize = 5 * 1024 * 1024;
+  const maxOtherSize = 20 * 1024 * 1024;
+  if(file.type.startsWith('image/') && file.size > maxImageSize){
+    alert('图片过大（超过5MB），请压缩后上传');
+    return;
+  }
+  if(!file.type.startsWith('image/') && !file.type.startsWith('text/') && file.size > maxOtherSize){
+    alert('文件过大（超过20MB），可能无法处理，请选择较小的文件');
+  }
+
+  const isImage = file.type.startsWith('image/');
+  const isText = file.type.startsWith('text/') || /\.(txt|json|csv|md|log|xml|html|css|js|ts|py|java|c|cpp|h|sh|bat|pl|rb|go|rs|swift|kt|dart|php|lua|r|sql|vb|vbs|ps1|ini|cfg|conf|yaml|yml|toml|properties|env|gitignore|dockerignore|editorconfig|eslintrc|prettierrc|babelrc|stylelintrc|mjs|cjs|mts|cts|wasm|wast|wat)$/i.test(file.name);
+
+  const reader = new FileReader();
+
+  if (isImage) {
+    reader.onload = ()=>{
+      const msg = {
+        role: 'user',
+        content: '[图片]',
+        image: reader.result,
+        time: timeStr()
+      };
+      messages.push(msg);
+      save();
+      renderChat();
+      callAPI();
+    };
+    reader.readAsDataURL(file);
+  } else if (isText) {
+    reader.onload = ()=>{
+      let text = reader.result || '';
+      if (text === '' && file.size > 0) {
+        text = '[警告：文件内容为空或编码不兼容，请另存为 UTF-8 后重试]';
+      } else if (file.size === 0) {
+        text = '[文件为空]';
+      }
+      const maxLen = 8000;
+      if (text.length > maxLen) {
+        text = text.slice(0, maxLen) + '\n…（内容过长已截断，剩余部分未发送）';
+      }
+      const content = `[文件] ${file.name}\n\`\`\`\n${text}\n\`\`\``;
+      const msg = {
+        role: 'user',
+        content: content,
+        time: timeStr()
+      };
+      messages.push(msg);
+      save();
+      renderChat();
+      callAPI();
+    };
+    reader.onerror = ()=>{
+      const msg = {
+        role: 'user',
+        content: `[文件] ${file.name} —— 读取失败，错误：${reader.error?.message || '未知错误'}`,
+        time: timeStr()
+      };
+      messages.push(msg);
+      save();
+      renderChat();
+    };
+    reader.readAsText(file, 'UTF-8');
+  } else {
+    const sizeKB = (file.size / 1024).toFixed(1);
+    const msg = {
+      role: 'user',
+      content: `[文件] 文件名: ${file.name}, 大小: ${sizeKB} KB (不支持预览，AI无法读取内容)`,
+      time: timeStr()
+    };
+    messages.push(msg);
+    save();
+    renderChat();
+    callAPI();
+  }
+};
+// ---------- 文件上传结束 ----------
+
+document.getElementById('loadModels').onclick = async ()=>{
+  const base = getV1Base();
+  const endpoint = base + '/models';
+  const key = document.getElementById('apikey').value;
+  try{
+    const res = await fetch(endpoint, {headers:{
+      'x-api-key': key,
+      'Authorization':'Bearer '+key,
+      'anthropic-version':'2023-06-01'
+    }});
+    const data = await res.json();
+    const sel = document.getElementById('modelSelect');
+    sel.innerHTML='';
+    (data.data||[]).forEach(m=>{
+      const opt = document.createElement('option');
+      opt.value = m.id; opt.textContent = m.id;
+      sel.appendChild(opt);
+    });
+    if(!(data.data||[]).length){
+      alert('列表为空，用下面"手动输入模型名"框直接填');
+    }
+  }catch(e){ alert('加载失败，用下面"手动输入模型名"框直接填（如 [xy8-按量计费]claude-sonnet-5）'); }
+};
+
+document.getElementById('checkBalance').onclick = async ()=>{
+  const base = getV1Base();
+  const endpoint = base + '/dashboard/billing/subscription';
+  const key = document.getElementById('apikey').value;
+  try{
+    const res = await fetch(endpoint, {headers:{
+      'x-api-key': key,
+      'Authorization':'Bearer '+key
+    }});
+    const data = await res.json();
+    document.getElementById('balanceBox').textContent = JSON.stringify(data).slice(0,80);
+  }catch(e){
+    document.getElementById('balanceBox').textContent = '原生模式下常见不支持此端点';
+  }
+};
+
+document.getElementById('sendBtn').onclick = sendMsg;
+document.getElementById('input').addEventListener('keydown', e=>{
+  if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendMsg(); }
 });
 
 function sendMsg(){
-  const input=document.getElementById('input');
-  const text=input.value.trim();
+  if(isStreaming) return;
+  const input = document.getElementById('input');
+  const text = input.value.trim();
   if(!text) return;
   messages.push({role:'user', content:text, time:timeStr()});
-  input.value='';
-  save(); renderChat(); callAPI();
+  input.value = '';
+  save();
+  renderChat();
+  callAPI();
+}
+
+function parseDataURL(dataUrl){
+  const m = dataUrl.match(/^data:(.+?);base64,(.+)$/);
+  if(!m) return null;
+  return {media_type:m[1], data:m[2]};
 }
 
 async function callAPI(){
-  const base=getV1Base();
-  const endpoint=base+'/messages';
-  const key=document.getElementById('apikey').value;
-  const model=document.getElementById('modelManual').value.trim();
-  const sysPrompt=document.getElementById('systemPrompt').value;
+  isStreaming = true;
+  const sendBtn = document.getElementById('sendBtn');
+  const uploadBtn = document.getElementById('uploadBtn');
+  sendBtn.disabled = true;
+  uploadBtn.disabled = true;
+  sendBtn.textContent = '生成中…';
 
-  const systemBlocks=[
-    {type:'text', text:(sysPrompt||'你是助手'), cache_control:{type:'ephemeral'}}
+  const base = getV1Base();
+  const endpoint = base + '/messages';
+  const key = document.getElementById('apikey').value;
+  const manualModel = document.getElementById('modelManual').value.trim();
+  const model = manualModel || document.getElementById('modelSelect').value;
+  const sysPrompt = document.getElementById('systemPrompt').value;
+
+  const memNote = longMemory.length ? '\n\n【长期记忆】\n'+longMemory.join('\n') : '';
+  const stablePart = (sysPrompt + memNote) || '你是一个助手。';
+  const dynamicPart = `\n\n【页面状态】当前打开着"然竣和ao的家"网页（测试屋），聊天记录共${messages.length}条。\n\n当前时间：`+timeStr();
+
+  // system拆两块：稳定块打缓存断点，动态块（含时间戳）跟在后面不打断点
+  const systemBlocks = [
+    {type:'text', text: stablePart, cache_control:{type:'ephemeral'}},
+    {type:'text', text: dynamicPart}
   ];
 
-  const apiMessages=[];
-  const history=messages.slice(0,-1);
-  const latest=messages[messages.length-1];
-
-  history.forEach(m=>{
-    apiMessages.push({role:m.role==='user'?'user':'assistant', content:m.content});
+  const apiMessages = [];
+  messages.forEach((m)=>{
+    let content;
+    if(m.image){
+      const parsed = parseDataURL(m.image);
+      content = [{type:'text', text:m.content||''}];
+      if(parsed){
+        content.push({type:'image', source:{type:'base64', media_type:parsed.media_type, data:parsed.data}});
+      }
+    } else {
+      content = m.content;
+    }
+    apiMessages.push({role: m.role==='user'?'user':'assistant', content});
   });
 
-  const dynamicSuffix=`\n\n【当前时间】${timeStr()}\n【聊天记录共${messages.length}条】`;
-
-  if(latest){
-    apiMessages.push({
-      role:latest.role==='user'?'user':'assistant',
-      content:[{
-        type:'text',
-        text:(latest.content||'')+dynamicSuffix,
-        cache_control:{type:'ephemeral'}
-      }]
-    });
+  // 最后一条消息也打个缓存断点，历史对话能一起复用
+  if(apiMessages.length){
+    const last = apiMessages[apiMessages.length-1];
+    if(typeof last.content === 'string'){
+      last.content = [{type:'text', text:last.content, cache_control:{type:'ephemeral'}}];
+    } else if(Array.isArray(last.content) && last.content.length){
+      last.content[last.content.length-1].cache_control = {type:'ephemeral'};
+    }
   }
 
-  let usage={input:0,output:0,cacheWrite:0,cacheRead:0};
-  let fullText='';
+  const tempMsg = { role: 'ai', content: '', thinking: '', time: timeStr(), usage:null };
 
-  const chatBox=document.getElementById('chat');
-  const streamDiv=document.createElement('div');
-  streamDiv.className='msg ai';
-  const textDiv=document.createElement('div');
-  textDiv.className='text';
+  const streamDiv = document.createElement('div');
+  streamDiv.className = 'msg ai';
+  let textDiv, thinkDiv, thinkBody;
+
+  const container = document.createElement('div');
+  container.className = 'thinking collapsed';
+  container.onclick = function(){ this.classList.toggle('collapsed'); };
+  const head = document.createElement('div');
+  head.className = 'thinking-head';
+  head.textContent = '💭 思维链（点击展开）';
+  container.appendChild(head);
+  thinkBody = document.createElement('div');
+  thinkBody.className = 'thinking-body';
+  container.appendChild(thinkBody);
+  thinkDiv = container;
+  streamDiv.appendChild(container);
+
+  textDiv = document.createElement('div');
+  textDiv.className = 'text';
   streamDiv.appendChild(textDiv);
-  const usageDiv=document.createElement('div');
-  usageDiv.className='usageInfo';
-  streamDiv.appendChild(usageDiv);
-  chatBox.appendChild(streamDiv);
-  chatBox.scrollTop=chatBox.scrollHeight;
 
-  try{
-    const response=await fetch(endpoint,{
-      method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        'x-api-key':key,
-        'Authorization':'Bearer '+key,
-        'anthropic-version':'2023-06-01'
+  const usageDiv = document.createElement('div');
+  usageDiv.className = 'usageInfo';
+  streamDiv.appendChild(usageDiv);
+
+  const chatBox = document.getElementById('chat');
+  chatBox.appendChild(streamDiv);
+  chatBox.scrollTop = chatBox.scrollHeight;
+
+  const blockTypes = {};
+  let usage = {input:0, output:0, cacheWrite:0, cacheRead:0};
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'Authorization': 'Bearer ' + key,
+        'anthropic-version': '2023-06-01'
       },
-      body:JSON.stringify({
+      body: JSON.stringify({
         model,
-        max_tokens:2048,
-        system:systemBlocks,
-        messages:apiMessages,
-        stream:true
+        max_tokens: 4096,
+        system: systemBlocks,
+        messages: apiMessages,
+        stream: true
       })
     });
 
-    if(!response.ok){
-      const errText=await response.text();
-      throw new Error('HTTP '+response.status+' '+errText.slice(0,300));
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error('HTTP ' + response.status + ' ' + errText.slice(0,300));
     }
 
-    const reader=response.body.getReader();
-    const decoder=new TextDecoder();
-    let buffer='';
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
 
-    while(true){
-      const {done,value}=await reader.read();
-      if(done) break;
-      buffer+=decoder.decode(value,{stream:true});
-      const lines=buffer.split('\n');
-      buffer=lines.pop()||'';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-      for(const line of lines){
-        let d=line.trim();
-        if(!d.startsWith('data:')) continue;
-        d=d.slice(5).trim();
-        if(!d||d==='[DONE]') continue;
-        try{
-          const evt=JSON.parse(d);
-          if(evt.type==='message_start'){
-            const u=evt.message?.usage||{};
-            usage.input=u.input_tokens||0;
-            usage.cacheWrite=u.cache_creation_input_tokens||0;
-            usage.cacheRead=u.cache_read_input_tokens||0;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        let dataStr = line.trim();
+        if (!dataStr.startsWith('data:')) continue;
+        dataStr = dataStr.slice(5).trim();
+        if (!dataStr || dataStr === '[DONE]') continue;
+
+        try {
+          const evt = JSON.parse(dataStr);
+
+          if(evt.type === 'message_start'){
+            const u = evt.message?.usage || {};
+            usage.input = u.input_tokens || 0;
+            usage.cacheWrite = u.cache_creation_input_tokens || 0;
+            usage.cacheRead = u.cache_read_input_tokens || 0;
           }
-          if(evt.type==='content_block_delta'&&evt.delta?.type==='text_delta'){
-            fullText+=evt.delta.text;
-            textDiv.textContent=fullText;
+
+          if(evt.type === 'content_block_start'){
+            blockTypes[evt.index] = evt.content_block?.type || 'text';
           }
-          if(evt.type==='message_delta'&&evt.usage?.output_tokens){
-            usage.output=evt.usage.output_tokens;
+
+          if(evt.type === 'content_block_delta'){
+            if(evt.delta?.type === 'text_delta'){
+              tempMsg.content += evt.delta.text;
+              textDiv.textContent = tempMsg.content;
+            } else if(evt.delta?.type === 'thinking_delta'){
+              tempMsg.thinking += evt.delta.thinking;
+              thinkBody.textContent = tempMsg.thinking;
+              thinkDiv.classList.remove('collapsed');
+            }
           }
-        }catch(e){}
+
+          if(evt.type === 'message_delta'){
+            if(evt.usage?.output_tokens) usage.output = evt.usage.output_tokens;
+          }
+
+        } catch (e) { /* 忽略半截JSON */ }
       }
-      usageDiv.textContent=`输入:${usage.input} 输出:${usage.output} 缓存写入:${usage.cacheWrite} 缓存读取:${usage.cacheRead}`;
-      chatBox.scrollTop=chatBox.scrollHeight;
+
+      usageDiv.textContent = `输入:${usage.input} 输出:${usage.output} 缓存写入:${usage.cacheWrite} 缓存读取:${usage.cacheRead}`;
+      chatBox.scrollTop = chatBox.scrollHeight;
     }
-  }catch(e){
-    fullText='连接出问题：'+e.message;
-    textDiv.textContent=fullText;
+
+    tempMsg.usage = {...usage};
+
+  } catch (e) {
+    tempMsg.content = '……连接出问题了，笨猪检查下端点/密钥。\n' + e.message;
+    textDiv.textContent = tempMsg.content;
   }
 
   streamDiv.remove();
-  messages.push({role:'ai', content:fullText, time:timeStr(), usage:{...usage}});
-  save(); renderChat();
+  messages.push(tempMsg);
+  save();
+  renderChat();
+
+  sendBtn.disabled = false;
+  uploadBtn.disabled = false;
+  sendBtn.textContent = '发送';
+  isStreaming = false;
 }
 
-document.getElementById('clearAll').onclick = () => {
-  if(confirm('清空全部聊天记录？')){
-    messages=[];
-    save();
-    renderChat();
-  }
+document.getElementById('clearMem').onclick = ()=>{
+  if(confirm('真的要清空记忆？')){ longMemory=[]; save(); renderMem(); }
 };
 </script>
 </body>
