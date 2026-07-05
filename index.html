@@ -129,7 +129,6 @@ function timeStr(){
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
 }
 
-// 端点统一处理：自动补 /v1
 function getV1Base(){
   let base = document.getElementById('endpoint').value.trim().replace(/\/+$/,'');
   if(!/\/v1$/.test(base)) base += '/v1';
@@ -181,7 +180,7 @@ function buildMessageDOM(m, i){
   const btns = document.createElement('div');
   btns.className = 'btns';
   btns.innerHTML = `
-    <button onclick="editMsg(${i})">✏️</button>
+    <button onclick="editMsg(${i})"✏️</button>
     <button onclick="deleteMsg(${i})">🗑️</button>
     ${m.role === 'ai' ? `<button onclick="reroll(${i})">🔁</button>` : ''}
   `;
@@ -215,7 +214,6 @@ function reroll(i){
   callAPI();
 }
 
-// ---------- 文件上传 ----------
 document.getElementById('uploadBtn').onclick = ()=>{
   if(isStreaming){
     alert('⏳ 然竣正在回复，请稍后上传文件');
@@ -305,7 +303,6 @@ document.getElementById('fileInput').onchange = (e)=>{
     callAPI();
   }
 };
-// ---------- 文件上传结束 ----------
 
 document.getElementById('loadModels').onclick = async ()=>{
   const base = getV1Base();
@@ -389,10 +386,9 @@ async function callAPI(){
   const stablePart = (sysPrompt + memNote) || '你是一个助手。';
   const dynamicPart = `\n\n【页面状态】当前打开着"然竣和ao的家"网页（测试屋），聊天记录共${messages.length}条。\n\n当前时间：`+timeStr();
 
-  // system拆两块：稳定块打缓存断点，动态块（含时间戳）跟在后面不打断点
+  // system只留稳定块打断点，时间戳不再放这里
   const systemBlocks = [
-    {type:'text', text: stablePart, cache_control:{type:'ephemeral'}},
-    {type:'text', text: dynamicPart}
+    {type:'text', text: stablePart, cache_control:{type:'ephemeral'}}
   ];
 
   const apiMessages = [];
@@ -410,13 +406,15 @@ async function callAPI(){
     apiMessages.push({role: m.role==='user'?'user':'assistant', content});
   });
 
-  // 最后一条消息也打个缓存断点，历史对话能一起复用
+  // 时间戳拼进最后一条消息末尾，再打缓存断点——不破坏前面的历史缓存
   if(apiMessages.length){
     const last = apiMessages[apiMessages.length-1];
     if(typeof last.content === 'string'){
-      last.content = [{type:'text', text:last.content, cache_control:{type:'ephemeral'}}];
+      last.content = [{type:'text', text: last.content + dynamicPart, cache_control:{type:'ephemeral'}}];
     } else if(Array.isArray(last.content) && last.content.length){
-      last.content[last.content.length-1].cache_control = {type:'ephemeral'};
+      const lastBlock = last.content[last.content.length-1];
+      if(lastBlock.type==='text') lastBlock.text += dynamicPart;
+      lastBlock.cache_control = {type:'ephemeral'};
     }
   }
 
