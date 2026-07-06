@@ -55,7 +55,7 @@ h3{font-size:14px;color:#444;margin:10px 0 6px}
 
   <h3>系统预设</h3>
   <textarea id="systemPrompt" rows="6" placeholder="然竣的性格设定粘贴这里"></textarea>
-  <div class="hint">提示：连续发2条以上消息，看AI气泡下方"缓存读取"是否&gt;0，&gt;0说明命中缓存。</div>
+  <div class="hint">提示：连续发2条以上消息，若第二条起「缓存读取」大于0，说明命中缓存。</div>
 
   <h3>记忆区（可编辑）</h3>
   <div id="memList"></div>
@@ -129,7 +129,6 @@ function timeStr(){
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
 }
 
-// 端点统一处理：自动补 /v1
 function getV1Base(){
   let base = document.getElementById('endpoint').value.trim().replace(/\/+$/,'');
   if(!/\/v1$/.test(base)) base += '/v1';
@@ -181,7 +180,7 @@ function buildMessageDOM(m, i){
   const btns = document.createElement('div');
   btns.className = 'btns';
   btns.innerHTML = `
-    <button onclick="editMsg(${i})">✏️</button>
+    <button onclick="editMsg(${i})"✏️</button>
     <button onclick="deleteMsg(${i})">🗑️</button>
     ${m.role === 'ai' ? `<button onclick="reroll(${i})">🔁</button>` : ''}
   `;
@@ -215,12 +214,8 @@ function reroll(i){
   callAPI();
 }
 
-// ---------- 文件上传 ----------
 document.getElementById('uploadBtn').onclick = ()=>{
-  if(isStreaming){
-    alert('⏳ 然竣正在回复，请稍后上传文件');
-    return;
-  }
+  if(isStreaming){ alert('⏳ 然竣正在回复，请稍后上传文件'); return; }
   document.getElementById('fileInput').click();
 };
 
@@ -232,8 +227,7 @@ document.getElementById('fileInput').onchange = (e)=>{
   const maxImageSize = 5 * 1024 * 1024;
   const maxOtherSize = 20 * 1024 * 1024;
   if(file.type.startsWith('image/') && file.size > maxImageSize){
-    alert('图片过大（超过5MB），请压缩后上传');
-    return;
+    alert('图片过大（超过5MB），请压缩后上传'); return;
   }
   if(!file.type.startsWith('image/') && !file.type.startsWith('text/') && file.size > maxOtherSize){
     alert('文件过大（超过20MB），可能无法处理，请选择较小的文件');
@@ -244,76 +238,40 @@ document.getElementById('fileInput').onchange = (e)=>{
 
   const reader = new FileReader();
 
-  if (isImage) {
+  if(isImage){
     reader.onload = ()=>{
-      const msg = {
-        role: 'user',
-        content: '[图片]',
-        image: reader.result,
-        time: timeStr()
-      };
-      messages.push(msg);
-      save();
-      renderChat();
-      callAPI();
+      messages.push({role:'user', content:'[图片]', image:reader.result, time:timeStr()});
+      save(); renderChat(); callAPI();
     };
     reader.readAsDataURL(file);
-  } else if (isText) {
+  } else if(isText){
     reader.onload = ()=>{
       let text = reader.result || '';
-      if (text === '' && file.size > 0) {
-        text = '[警告：文件内容为空或编码不兼容，请另存为 UTF-8 后重试]';
-      } else if (file.size === 0) {
-        text = '[文件为空]';
-      }
+      if(text==='' && file.size>0) text='[警告：文件内容为空或编码不兼容，请另存为 UTF-8 后重试]';
+      else if(file.size===0) text='[文件为空]';
       const maxLen = 8000;
-      if (text.length > maxLen) {
-        text = text.slice(0, maxLen) + '\n…（内容过长已截断，剩余部分未发送）';
-      }
-      const content = `[文件] ${file.name}\n\`\`\`\n${text}\n\`\`\``;
-      const msg = {
-        role: 'user',
-        content: content,
-        time: timeStr()
-      };
-      messages.push(msg);
-      save();
-      renderChat();
-      callAPI();
+      if(text.length>maxLen) text=text.slice(0,maxLen)+'\n…（内容过长已截断）';
+      messages.push({role:'user', content:`[文件] ${file.name}\n\`\`\`\n${text}\n\`\`\``});
+      save(); renderChat(); callAPI();
     };
     reader.onerror = ()=>{
-      const msg = {
-        role: 'user',
-        content: `[文件] ${file.name} —— 读取失败，错误：${reader.error?.message || '未知错误'}`,
-        time: timeStr()
-      };
-      messages.push(msg);
-      save();
-      renderChat();
+      messages.push({role:'user', content:`[文件] ${file.name} —— 读取失败：${reader.error?.message||'未知错误'}`});
+      save(); renderChat();
     };
-    reader.readAsText(file, 'UTF-8');
+    reader.readAsText(file,'UTF-8');
   } else {
-    const sizeKB = (file.size / 1024).toFixed(1);
-    const msg = {
-      role: 'user',
-      content: `[文件] 文件名: ${file.name}, 大小: ${sizeKB} KB (不支持预览，AI无法读取内容)`,
-      time: timeStr()
-    };
-    messages.push(msg);
-    save();
-    renderChat();
-    callAPI();
+    const sizeKB = (file.size/1024).toFixed(1);
+    messages.push({role:'user', content:`[文件] 文件名: ${file.name}, 大小: ${sizeKB} KB (不支持预览，AI无法读取内容)`, time:timeStr()});
+    save(); renderChat(); callAPI();
   }
 };
-// ---------- 文件上传结束 ----------
 
 document.getElementById('loadModels').onclick = async ()=>{
   const base = getV1Base();
-  const endpoint = base + '/models';
   const key = document.getElementById('apikey').value;
   try{
-    const res = await fetch(endpoint, {headers:{
-      'x-api-key': key,
+    const res = await fetch(base+'/models', {headers:{
+      'x-api-key':key,
       'Authorization':'Bearer '+key,
       'anthropic-version':'2023-06-01'
     }});
@@ -322,23 +280,19 @@ document.getElementById('loadModels').onclick = async ()=>{
     sel.innerHTML='';
     (data.data||[]).forEach(m=>{
       const opt = document.createElement('option');
-      opt.value = m.id; opt.textContent = m.id;
+      opt.value=m.id; opt.textContent=m.id;
       sel.appendChild(opt);
     });
-    if(!(data.data||[]).length){
-      alert('列表为空，用下面"手动输入模型名"框直接填');
-    }
-  }catch(e){ alert('加载失败，用下面"手动输入模型名"框直接填（如 [xy8-按量计费]claude-sonnet-5）'); }
+    if(!(data.data||[]).length) alert('列表为空，用下面手动输入框直接填');
+  }catch(e){ alert('加载失败，用下面手动输入框直接填（如 [xy8-按量计费]claude-sonnet-5）'); }
 };
 
 document.getElementById('checkBalance').onclick = async ()=>{
   const base = getV1Base();
-  const endpoint = base + '/dashboard/billing/subscription';
   const key = document.getElementById('apikey').value;
   try{
-    const res = await fetch(endpoint, {headers:{
-      'x-api-key': key,
-      'Authorization':'Bearer '+key
+    const res = await fetch(base+'/dashboard/billing/subscription',{headers:{
+      'x-api-key':key,'Authorization':'Bearer '+key
     }});
     const data = await res.json();
     document.getElementById('balanceBox').textContent = JSON.stringify(data).slice(0,80);
@@ -358,10 +312,8 @@ function sendMsg(){
   const text = input.value.trim();
   if(!text) return;
   messages.push({role:'user', content:text, time:timeStr()});
-  input.value = '';
-  save();
-  renderChat();
-  callAPI();
+  input.value='';
+  save(); renderChat(); callAPI();
 }
 
 function parseDataURL(dataUrl){
@@ -374,72 +326,80 @@ async function callAPI(){
   isStreaming = true;
   const sendBtn = document.getElementById('sendBtn');
   const uploadBtn = document.getElementById('uploadBtn');
-  sendBtn.disabled = true;
-  uploadBtn.disabled = true;
-  sendBtn.textContent = '生成中…';
+  sendBtn.disabled=true; uploadBtn.disabled=true;
+  sendBtn.textContent='生成中…';
 
   const base = getV1Base();
-  const endpoint = base + '/messages';
+  const endpoint = base+'/messages';
   const key = document.getElementById('apikey').value;
   const manualModel = document.getElementById('modelManual').value.trim();
   const model = manualModel || document.getElementById('modelSelect').value;
   const sysPrompt = document.getElementById('systemPrompt').value;
-
   const memNote = longMemory.length ? '\n\n【长期记忆】\n'+longMemory.join('\n') : '';
-  const stablePart = (sysPrompt + memNote) || '你是一个助手。';
-  const dynamicPart = `\n\n【页面状态】当前打开着"然竣和ao的家"网页（测试屋），聊天记录共${messages.length}条。\n\n当前时间：`+timeStr();
 
-  // system拆两块：稳定块打缓存断点，动态块（含时间戳）跟在后面不打断点
+  // ① 稳定块：人设+记忆，打第一个缓存断点，绝不含任何会变的内容
+  const stableText = (sysPrompt + memNote) || '你是一个助手。';
   const systemBlocks = [
-    {type:'text', text: stablePart, cache_control:{type:'ephemeral'}},
-    {type:'text', text: dynamicPart}
+    {type:'text', text:stableText, cache_control:{type:'ephemeral'}}
   ];
 
+  // ② 构造消息数组，历史消息保持干净，不加任何时间戳或状态
   const apiMessages = [];
-  messages.forEach((m)=>{
+  const historyMsgs = messages.slice(0, -1); // 历史（不含最新一条）
+  const latestMsg = messages[messages.length-1]; // 最新一条
+
+  historyMsgs.forEach(m=>{
     let content;
     if(m.image){
       const parsed = parseDataURL(m.image);
       content = [{type:'text', text:m.content||''}];
-      if(parsed){
-        content.push({type:'image', source:{type:'base64', media_type:parsed.media_type, data:parsed.data}});
-      }
+      if(parsed) content.push({type:'image', source:{type:'base64', media_type:parsed.media_type, data:parsed.data}});
     } else {
       content = m.content;
     }
-    apiMessages.push({role: m.role==='user'?'user':'assistant', content});
+    apiMessages.push({role:m.role==='user'?'user':'assistant', content});
   });
 
-  // 最后一条消息也打个缓存断点，历史对话能一起复用
-  if(apiMessages.length){
-    const last = apiMessages[apiMessages.length-1];
-    if(typeof last.content === 'string'){
-      last.content = [{type:'text', text:last.content, cache_control:{type:'ephemeral'}}];
-    } else if(Array.isArray(last.content) && last.content.length){
-      last.content[last.content.length-1].cache_control = {type:'ephemeral'};
+  // ③ 最新一条消息末尾拼入时间戳+页面状态，打第二个缓存断点
+  // 时间戳只在最新消息，不污染历史，不破坏前缀缓存
+  const dynamicSuffix = `\n\n【当前时间】${timeStr()}\n【聊天记录共${messages.length}条】`;
+
+  if(latestMsg){
+    let latestContent;
+    if(latestMsg.image){
+      const parsed = parseDataURL(latestMsg.image);
+      latestContent = [{type:'text', text:(latestMsg.content||'')+dynamicSuffix}];
+      if(parsed) latestContent.push({type:'image', source:{type:'base64', media_type:parsed.media_type, data:parsed.data}});
+      // 最后一个block打断点
+      latestContent[latestContent.length-1].cache_control = {type:'ephemeral'};
+    } else {
+      latestContent = [{
+        type:'text',
+        text:(latestMsg.content||'')+dynamicSuffix,
+        cache_control:{type:'ephemeral'}
+      }];
     }
+    apiMessages.push({role:latestMsg.role==='user'?'user':'assistant', content:latestContent});
   }
 
-  const tempMsg = { role: 'ai', content: '', thinking: '', time: timeStr(), usage:null };
-
+  // 流式渲染DOM
+  const tempMsg = {role:'ai', content:'', thinking:'', time:timeStr(), usage:null};
   const streamDiv = document.createElement('div');
   streamDiv.className = 'msg ai';
-  let textDiv, thinkDiv, thinkBody;
 
-  const container = document.createElement('div');
-  container.className = 'thinking collapsed';
-  container.onclick = function(){ this.classList.toggle('collapsed'); };
-  const head = document.createElement('div');
-  head.className = 'thinking-head';
-  head.textContent = '💭 思维链（点击展开）';
-  container.appendChild(head);
-  thinkBody = document.createElement('div');
+  const thinkContainer = document.createElement('div');
+  thinkContainer.className = 'thinking collapsed';
+  thinkContainer.onclick = function(){ this.classList.toggle('collapsed'); };
+  const thinkHead = document.createElement('div');
+  thinkHead.className = 'thinking-head';
+  thinkHead.textContent = '💭 思维链（点击展开）';
+  thinkContainer.appendChild(thinkHead);
+  const thinkBody = document.createElement('div');
   thinkBody.className = 'thinking-body';
-  container.appendChild(thinkBody);
-  thinkDiv = container;
-  streamDiv.appendChild(container);
+  thinkContainer.appendChild(thinkBody);
+  streamDiv.appendChild(thinkContainer);
 
-  textDiv = document.createElement('div');
+  const textDiv = document.createElement('div');
   textDiv.className = 'text';
   streamDiv.appendChild(textDiv);
 
@@ -451,80 +411,70 @@ async function callAPI(){
   chatBox.appendChild(streamDiv);
   chatBox.scrollTop = chatBox.scrollHeight;
 
-  const blockTypes = {};
   let usage = {input:0, output:0, cacheWrite:0, cacheRead:0};
 
-  try {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': key,
-        'Authorization': 'Bearer ' + key,
-        'anthropic-version': '2023-06-01'
+  try{
+    const response = await fetch(endpoint,{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'x-api-key':key,
+        'Authorization':'Bearer '+key,
+        'anthropic-version':'2023-06-01'
       },
       body: JSON.stringify({
         model,
-        max_tokens: 4096,
-        system: systemBlocks,
-        messages: apiMessages,
-        stream: true
+        max_tokens:4096,
+        system:systemBlocks,
+        messages:apiMessages,
+        stream:true
       })
     });
 
-    if (!response.ok) {
+    if(!response.ok){
       const errText = await response.text();
-      throw new Error('HTTP ' + response.status + ' ' + errText.slice(0,300));
+      throw new Error('HTTP '+response.status+' '+errText.slice(0,300));
     }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
+    while(true){
+      const {done, value} = await reader.read();
+      if(done) break;
+      buffer += decoder.decode(value,{stream:true});
       const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+      buffer = lines.pop()||'';
 
-      for (const line of lines) {
+      for(const line of lines){
         let dataStr = line.trim();
-        if (!dataStr.startsWith('data:')) continue;
+        if(!dataStr.startsWith('data:')) continue;
         dataStr = dataStr.slice(5).trim();
-        if (!dataStr || dataStr === '[DONE]') continue;
-
-        try {
+        if(!dataStr || dataStr==='[DONE]') continue;
+        try{
           const evt = JSON.parse(dataStr);
 
-          if(evt.type === 'message_start'){
-            const u = evt.message?.usage || {};
-            usage.input = u.input_tokens || 0;
-            usage.cacheWrite = u.cache_creation_input_tokens || 0;
-            usage.cacheRead = u.cache_read_input_tokens || 0;
+          if(evt.type==='message_start'){
+            const u = evt.message?.usage||{};
+            usage.input = u.input_tokens||0;
+            usage.cacheWrite = u.cache_creation_input_tokens||0;
+            usage.cacheRead = u.cache_read_input_tokens||0;
           }
-
-          if(evt.type === 'content_block_start'){
-            blockTypes[evt.index] = evt.content_block?.type || 'text';
-          }
-
-          if(evt.type === 'content_block_delta'){
-            if(evt.delta?.type === 'text_delta'){
+          if(evt.type==='content_block_delta'){
+            if(evt.delta?.type==='text_delta'){
               tempMsg.content += evt.delta.text;
               textDiv.textContent = tempMsg.content;
-            } else if(evt.delta?.type === 'thinking_delta'){
+            } else if(evt.delta?.type==='thinking_delta'){
               tempMsg.thinking += evt.delta.thinking;
               thinkBody.textContent = tempMsg.thinking;
-              thinkDiv.classList.remove('collapsed');
+              thinkContainer.classList.remove('collapsed');
             }
           }
-
-          if(evt.type === 'message_delta'){
+          if(evt.type==='message_delta'){
             if(evt.usage?.output_tokens) usage.output = evt.usage.output_tokens;
           }
-
-        } catch (e) { /* 忽略半截JSON */ }
+        }catch(e){ /* 忽略半截JSON */ }
       }
 
       usageDiv.textContent = `输入:${usage.input} 输出:${usage.output} 缓存写入:${usage.cacheWrite} 缓存读取:${usage.cacheRead}`;
@@ -533,20 +483,18 @@ async function callAPI(){
 
     tempMsg.usage = {...usage};
 
-  } catch (e) {
-    tempMsg.content = '……连接出问题了，笨猪检查下端点/密钥。\n' + e.message;
+  }catch(e){
+    tempMsg.content = '……连接出问题了，笨猪检查下端点/密钥。\n'+e.message;
     textDiv.textContent = tempMsg.content;
   }
 
   streamDiv.remove();
   messages.push(tempMsg);
-  save();
-  renderChat();
+  save(); renderChat();
 
-  sendBtn.disabled = false;
-  uploadBtn.disabled = false;
-  sendBtn.textContent = '发送';
-  isStreaming = false;
+  sendBtn.disabled=false; uploadBtn.disabled=false;
+  sendBtn.textContent='发送';
+  isStreaming=false;
 }
 
 document.getElementById('clearMem').onclick = ()=>{
